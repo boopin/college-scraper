@@ -6,12 +6,11 @@ import json
 import time
 import re
 from urllib.parse import urljoin, urlparse
-import concurrent.futures
 from typing import List, Dict, Optional
 
 # Page config
 st.set_page_config(
-    page_title="Careers360 College Scraper",
+    page_title="Individual College Scraper",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -26,58 +25,70 @@ st.markdown("""
         font-size: 2.5rem;
         margin-bottom: 2rem;
     }
-    .college-card {
-        border: 1px solid #ddd;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-        background: #f8f9fa;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .metric-container {
+    .section-header {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 1rem;
         border-radius: 10px;
+        margin: 1rem 0;
         text-align: center;
+        font-weight: bold;
     }
-    .status-success {
-        background: #d4edda;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 5px;
-        border: 1px solid #c3e6cb;
+    .data-card {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        background: #f8f9fa;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    .status-error {
-        background: #f8d7da;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 5px;
-        border: 1px solid #f5c6cb;
-    }
-    .course-item {
-        background: white;
-        padding: 0.8rem;
-        margin: 0.5rem 0;
-        border-radius: 6px;
-        border-left: 4px solid #667eea;
-    }
-    .placement-stats {
+    .metric-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 1rem;
         margin: 1rem 0;
     }
-    .stat-box {
-        background: #f0f2f6;
+    .metric-item {
+        background: white;
         padding: 1rem;
         border-radius: 8px;
-        text-align: center;
+        border-left: 4px solid #667eea;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .course-table {
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 1rem 0;
+    }
+    .success-banner {
+        background: #d4edda;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #c3e6cb;
+        margin: 1rem 0;
+    }
+    .error-banner {
+        background: #f8d7da;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #f5c6cb;
+        margin: 1rem 0;
+    }
+    .info-banner {
+        background: #d1ecf1;
+        color: #0c5460;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #bee5eb;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-class ComprehensiveCollegeScraper:
+class IndividualCollegeScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -87,232 +98,144 @@ class ComprehensiveCollegeScraper:
             'Accept-Encoding': 'gzip, deflate',
             'DNT': '1',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'no-cache'
         })
         
-    def make_request(self, url: str, delay: float = 1.0) -> Optional[BeautifulSoup]:
-        """Make HTTP request with error handling"""
+    def make_request(self, url: str, delay: float = 2.0) -> Optional[BeautifulSoup]:
+        """Make HTTP request with comprehensive error handling"""
         try:
+            st.info(f"🌐 Fetching: {url}")
             time.sleep(delay)
-            response = self.session.get(url, timeout=15)
+            
+            response = self.session.get(url, timeout=20)
             response.raise_for_status()
-            return BeautifulSoup(response.content, 'html.parser')
+            
+            # Check if we got actual content
+            if len(response.content) < 1000:
+                st.warning(f"⚠️ Received very small response ({len(response.content)} bytes)")
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Debug: Show page title
+            title = soup.find('title')
+            if title:
+                st.success(f"✅ Successfully loaded: {title.get_text()[:100]}...")
+            
+            return soup
+            
+        except requests.exceptions.RequestException as e:
+            st.error(f"❌ Network error for {url}: {str(e)}")
+            return None
         except Exception as e:
-            st.error(f"Error fetching {url}: {str(e)}")
+            st.error(f"❌ Parsing error for {url}: {str(e)}")
             return None
     
-    def extract_colleges_from_ranking(self, url: str, max_colleges: int = 10) -> List[Dict]:
-        """Extract college list from ranking page with comprehensive data"""
+    def scrape_college_overview(self, url: str) -> Dict:
+        """Scrape basic college information from main page"""
         soup = self.make_request(url)
         if not soup:
-            return []
+            return {}
         
-        colleges = []
+        college_data = {
+            'name': 'Unknown College',
+            'location': 'N/A',
+            'established': 'N/A',
+            'type': 'N/A',
+            'affiliation': 'N/A',
+            'website': 'N/A',
+            'ranking': {},
+            'overview': 'N/A'
+        }
         
-        # Strategy 1: Look for structured college data in tables
-        tables = soup.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')[1:]  # Skip header
-            if len(rows) > 3:  # Likely a college ranking table
-                st.info(f"Found ranking table with {len(rows)} rows")
-                for i, row in enumerate(rows[:max_colleges]):
-                    college_data = self.extract_from_table_row(row, i + 1, url)
-                    if college_data:
-                        colleges.append(college_data)
-                if colleges:
-                    break
-        
-        # Strategy 2: Look for college cards or list items
-        if not colleges:
-            selectors = [
-                '.college-item', '.university-item', '.ranking-item',
-                '.college-card', '.university-card', '[data-college]',
-                '.list-item', '.search-result'
-            ]
-            
-            for selector in selectors:
-                elements = soup.select(selector)
-                if elements:
-                    st.info(f"Found {len(elements)} college items using selector: {selector}")
-                    for i, element in enumerate(elements[:max_colleges]):
-                        college_data = self.extract_from_element(element, i + 1, url)
-                        if college_data:
-                            colleges.append(college_data)
-                    break
-        
-        # Strategy 3: Extract from any links containing university/college
-        if not colleges:
-            all_links = soup.find_all('a', href=True)
-            college_links = []
-            for link in all_links:
-                href = link.get('href', '')
-                text = link.get_text(strip=True)
-                if ('university' in href or 'college' in href) and len(text) > 5:
-                    college_links.append((link, text, href))
-            
-            if college_links:
-                st.info(f"Found {len(college_links)} college links")
-                for i, (link, text, href) in enumerate(college_links[:max_colleges]):
-                    college_data = self.extract_from_link(link, text, href, i + 1, url)
-                    if college_data:
-                        colleges.append(college_data)
-        
-        return colleges
-    
-    def extract_from_table_row(self, row, rank: int, base_url: str) -> Optional[Dict]:
-        """Extract college data from table row"""
-        try:
-            cells = row.find_all(['td', 'th'])
-            if len(cells) < 2:
-                return None
-            
-            # Find college name and link
-            college_link = None
-            college_name = None
-            
-            for cell in cells:
-                link = cell.find('a', href=True)
-                if link and 'university' in link.get('href', ''):
-                    college_link = urljoin(base_url, link['href'])
-                    college_name = link.get_text(strip=True)
-                    break
-            
-            if not college_name or not college_link:
-                return None
-            
-            # Extract additional data from cells
-            cell_texts = [cell.get_text(strip=True) for cell in cells]
-            
-            # Try to extract fees, location, rating from cell content
-            fees = self.extract_fees_from_text(' '.join(cell_texts))
-            location = self.extract_location_from_text(' '.join(cell_texts))
-            rating = self.extract_rating_from_text(' '.join(cell_texts))
-            
-            return {
-                'name': college_name,
-                'rank': rank,
-                'rating': rating or 'N/A',
-                'location': location or 'N/A',
-                'fees': fees or 'N/A',
-                'college_url': college_link,
-                'courses_url': college_link.rstrip('/') + '/courses',
-                'admission_url': college_link.rstrip('/') + '/admission',
-                'placement_url': college_link.rstrip('/') + '/placement',
-                'source': 'table_row'
-            }
-        except Exception as e:
-            return None
-    
-    def extract_from_element(self, element, rank: int, base_url: str) -> Optional[Dict]:
-        """Extract college data from generic element"""
-        try:
-            # Find college link
-            link = element.find('a', href=True)
-            if not link:
-                return None
-            
-            college_link = urljoin(base_url, link['href'])
-            college_name = link.get_text(strip=True)
-            
-            if not college_name or len(college_name) < 3:
-                return None
-            
-            # Extract additional info from element text
-            element_text = element.get_text()
-            
-            return {
-                'name': college_name,
-                'rank': rank,
-                'rating': self.extract_rating_from_text(element_text) or 'N/A',
-                'location': self.extract_location_from_text(element_text) or 'N/A',
-                'fees': self.extract_fees_from_text(element_text) or 'N/A',
-                'college_url': college_link,
-                'courses_url': college_link.rstrip('/') + '/courses',
-                'admission_url': college_link.rstrip('/') + '/admission',
-                'placement_url': college_link.rstrip('/') + '/placement',
-                'source': 'element'
-            }
-        except Exception as e:
-            return None
-    
-    def extract_from_link(self, link, text: str, href: str, rank: int, base_url: str) -> Optional[Dict]:
-        """Extract basic college data from link"""
-        try:
-            college_link = urljoin(base_url, href)
-            
-            return {
-                'name': text,
-                'rank': rank,
-                'rating': 'N/A',
-                'location': 'N/A',
-                'fees': 'N/A',
-                'college_url': college_link,
-                'courses_url': college_link.rstrip('/') + '/courses',
-                'admission_url': college_link.rstrip('/') + '/admission',
-                'placement_url': college_link.rstrip('/') + '/placement',
-                'source': 'link'
-            }
-        except Exception as e:
-            return None
-    
-    def extract_fees_from_text(self, text: str) -> Optional[str]:
-        """Extract fees from text using regex"""
-        fee_patterns = [
-            r'₹[\d,]+(?:\.\d+)?(?:\s*(?:lakh|crore|L|Cr))?',
-            r'Rs\.?\s*[\d,]+(?:\.\d+)?(?:\s*(?:lakh|crore|L|Cr))?',
-            r'[\d,]+(?:\.\d+)?\s*(?:lakh|crore|L|Cr)'
+        # Extract college name
+        name_selectors = [
+            'h1', '.college-name', '.university-name', '.main-heading',
+            '.page-title', '[data-college-name]'
         ]
         
-        for pattern in fee_patterns:
+        for selector in name_selectors:
+            element = soup.select_one(selector)
+            if element:
+                name = element.get_text(strip=True)
+                if len(name) > 5 and 'careers360' not in name.lower():
+                    college_data['name'] = name
+                    st.success(f"📝 Found college name: {name}")
+                    break
+        
+        # Extract key information from page text
+        page_text = soup.get_text()
+        
+        # Extract establishment year
+        year_match = re.search(r'(?:established|founded).*?(\d{4})', page_text, re.IGNORECASE)
+        if year_match:
+            college_data['established'] = year_match.group(1)
+        
+        # Extract location
+        location_patterns = [
+            r'(?:located in|address|campus).*?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z][a-z]+)',
+            r'([A-Z][a-z]+,\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*,?\s*India',
+        ]
+        
+        for pattern in location_patterns:
+            match = re.search(pattern, page_text)
+            if match:
+                college_data['location'] = match.group(1)
+                break
+        
+        # Extract college type
+        if 'government' in page_text.lower() or 'public' in page_text.lower():
+            college_data['type'] = 'Government'
+        elif 'private' in page_text.lower():
+            college_data['type'] = 'Private'
+        elif 'deemed' in page_text.lower():
+            college_data['type'] = 'Deemed University'
+        
+        # Extract rankings if present
+        rankings = self.extract_rankings(soup, page_text)
+        if rankings:
+            college_data['ranking'] = rankings
+        
+        # Extract overview/description
+        overview_selectors = [
+            '.overview', '.description', '.about', '.college-info',
+            '.summary', '[data-overview]'
+        ]
+        
+        for selector in overview_selectors:
+            element = soup.select_one(selector)
+            if element:
+                overview = element.get_text(strip=True)
+                if len(overview) > 100:
+                    college_data['overview'] = overview[:500] + "..."
+                    break
+        
+        return college_data
+    
+    def extract_rankings(self, soup: BeautifulSoup, text: str) -> Dict:
+        """Extract ranking information"""
+        rankings = {}
+        
+        # Common ranking patterns
+        ranking_patterns = [
+            (r'NIRF.*?rank.*?(\d+)', 'NIRF'),
+            (r'rank.*?(\d+).*?NIRF', 'NIRF'),
+            (r'QS.*?rank.*?(\d+)', 'QS'),
+            (r'rank.*?(\d+).*?QS', 'QS'),
+            (r'India Today.*?rank.*?(\d+)', 'India Today'),
+            (r'Outlook.*?rank.*?(\d+)', 'Outlook')
+        ]
+        
+        for pattern, source in ranking_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(0)
-        return None
+                rankings[source] = match.group(1)
+        
+        return rankings
     
-    def extract_location_from_text(self, text: str) -> Optional[str]:
-        """Extract location from text"""
-        # Common Indian states and cities
-        locations = [
-            'Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Kolkata', 'Hyderabad',
-            'Pune', 'Ahmedabad', 'Surat', 'Jaipur', 'Lucknow', 'Kanpur',
-            'Maharashtra', 'Tamil Nadu', 'Karnataka', 'Gujarat', 'Rajasthan',
-            'Uttar Pradesh', 'West Bengal', 'Andhra Pradesh', 'Telangana',
-            'Kerala', 'Odisha', 'Punjab', 'Haryana', 'Madhya Pradesh'
-        ]
-        
-        for location in locations:
-            if location.lower() in text.lower():
-                return location
-        
-        # Try to extract state patterns
-        state_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s*India\b'
-        match = re.search(state_pattern, text)
-        if match:
-            return match.group(1)
-        
-        return None
-    
-    def extract_rating_from_text(self, text: str) -> Optional[str]:
-        """Extract rating from text"""
-        rating_patterns = [
-            r'[A-Z]{1,5}(?:\+)?',  # AAAAA, AAA+, etc.
-            r'\d\.\d+/\d+',         # 4.5/5
-            r'\d\.\d+\s*stars?',    # 4.5 stars
-            r'\d+/\d+',             # 9/10
-        ]
-        
-        for pattern in rating_patterns:
-            match = re.search(pattern, text)
-            if match:
-                rating = match.group(0)
-                # Validate it's likely a rating
-                if 'A' in rating or ('.' in rating and len(rating) < 10):
-                    return rating
-        return None
-    
-    def scrape_courses(self, url: str) -> List[Dict]:
-        """Scrape courses from college courses page"""
-        soup = self.make_request(url, delay=2.0)
+    def scrape_courses_page(self, url: str) -> List[Dict]:
+        """Scrape detailed course information"""
+        soup = self.make_request(url)
         if not soup:
             return []
         
@@ -320,490 +243,748 @@ class ComprehensiveCollegeScraper:
         
         # Strategy 1: Look for course tables
         tables = soup.find_all('table')
-        for table in tables:
-            course_rows = table.find_all('tr')[1:]  # Skip header
-            if len(course_rows) > 2:  # Likely a courses table
-                for row in course_rows:
-                    course_data = self.extract_course_from_row(row)
+        st.info(f"🔍 Found {len(tables)} tables on courses page")
+        
+        for i, table in enumerate(tables):
+            table_courses = self.extract_courses_from_table(table, f"Table {i+1}")
+            if table_courses:
+                courses.extend(table_courses)
+                st.success(f"✅ Extracted {len(table_courses)} courses from table {i+1}")
+        
+        # Strategy 2: Look for structured course elements
+        course_selectors = [
+            '.course-item', '.course-card', '.program-item', '.program-card',
+            '.course-details', '.course-info', '[data-course]', '.course-list li'
+        ]
+        
+        for selector in course_selectors:
+            elements = soup.select(selector)
+            if elements:
+                st.info(f"🔍 Found {len(elements)} course elements with selector: {selector}")
+                for element in elements:
+                    course_data = self.extract_course_from_element(element)
                     if course_data:
                         courses.append(course_data)
-                if courses:
-                    break
         
-        # Strategy 2: Look for course cards/items
+        # Strategy 3: Text-based extraction for specific course patterns
         if not courses:
-            course_selectors = [
-                '.course-card', '.course-item', '.program-card', '.program-item',
-                '.course-details', '.course-info', '[data-course]'
-            ]
-            
-            for selector in course_selectors:
-                elements = soup.select(selector)
-                if elements:
-                    for element in elements[:20]:  # Limit courses
-                        course_data = self.extract_course_from_element(element)
-                        if course_data:
-                            courses.append(course_data)
-                    break
+            st.info("🔍 Attempting text-based course extraction...")
+            text_courses = self.extract_courses_from_text(soup.get_text())
+            courses.extend(text_courses)
         
-        # Strategy 3: Text pattern matching
-        if not courses:
-            page_text = soup.get_text()
-            courses = self.extract_courses_from_text(page_text)
+        # Remove duplicates based on course name
+        seen_names = set()
+        unique_courses = []
+        for course in courses:
+            course_name = course.get('name', '').lower().strip()
+            if course_name and course_name not in seen_names and len(course_name) > 3:
+                seen_names.add(course_name)
+                unique_courses.append(course)
         
-        return courses[:15]  # Limit to 15 courses
+        st.success(f"📚 Total unique courses found: {len(unique_courses)}")
+        return unique_courses
     
-    def extract_course_from_row(self, row) -> Optional[Dict]:
-        """Extract course data from table row"""
+    def extract_courses_from_table(self, table, table_name: str) -> List[Dict]:
+        """Extract courses from HTML table"""
+        courses = []
+        
         try:
-            cells = row.find_all(['td', 'th'])
-            if len(cells) < 2:
-                return None
+            # Get headers to understand table structure
+            headers = []
+            header_row = table.find('tr')
+            if header_row:
+                headers = [th.get_text(strip=True).lower() for th in header_row.find_all(['th', 'td'])]
             
-            cell_texts = [cell.get_text(strip=True) for cell in cells]
+            # Process data rows
+            rows = table.find_all('tr')[1:]  # Skip header
             
-            # First cell usually contains course name
-            course_name = cell_texts[0]
-            if len(course_name) < 5 or not any(keyword in course_name.lower() 
-                                             for keyword in ['tech', 'mba', 'mca', 'msc', 'ma', 'ba', 'bca', 'bsc']):
-                return None
-            
-            # Try to extract other details
-            all_text = ' '.join(cell_texts)
-            
-            return {
-                'name': course_name,
-                'duration': self.extract_duration_from_text(all_text) or 'N/A',
-                'fees': self.extract_fees_from_text(all_text) or 'N/A',
-                'seats': self.extract_seats_from_text(all_text) or 'N/A',
-                'mode': 'Full Time'  # Default assumption
-            }
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) < 2:
+                    continue
+                
+                cell_texts = [cell.get_text(strip=True) for cell in cells]
+                
+                # Try to identify course name (usually first column or contains degree keywords)
+                course_name = None
+                for i, cell_text in enumerate(cell_texts):
+                    if any(keyword in cell_text.lower() for keyword in ['tech', 'mba', 'mca', 'msc', 'ma', 'ba', 'bca', 'bsc', 'diploma']):
+                        if len(cell_text) > 5:
+                            course_name = cell_text
+                            break
+                
+                if not course_name and cell_texts[0] and len(cell_texts[0]) > 5:
+                    course_name = cell_texts[0]
+                
+                if course_name:
+                    # Extract additional details
+                    course_data = {
+                        'name': course_name,
+                        'duration': self.extract_duration(' '.join(cell_texts)),
+                        'fees': self.extract_fees(' '.join(cell_texts)),
+                        'seats': self.extract_seats(' '.join(cell_texts)),
+                        'eligibility': self.extract_eligibility(' '.join(cell_texts)),
+                        'source': table_name
+                    }
+                    courses.append(course_data)
+        
         except Exception as e:
-            return None
+            st.warning(f"⚠️ Error extracting from {table_name}: {str(e)}")
+        
+        return courses
     
     def extract_course_from_element(self, element) -> Optional[Dict]:
-        """Extract course data from element"""
+        """Extract course data from HTML element"""
         try:
             text = element.get_text()
             
             # Look for course name patterns
             course_patterns = [
-                r'(B\.Tech[^,\n]*)', r'(M\.Tech[^,\n]*)', r'(MBA[^,\n]*)',
-                r'(BCA[^,\n]*)', r'(MCA[^,\n]*)', r'(M\.Sc[^,\n]*)',
-                r'(Bachelor[^,\n]*)', r'(Master[^,\n]*)'
+                r'(B\.?Tech\.?\s+[^,\n]+)', r'(M\.?Tech\.?\s+[^,\n]+)',
+                r'(MBA\s*[^,\n]*)', r'(BCA\s+[^,\n]+)', r'(MCA\s+[^,\n]+)',
+                r'(M\.?Sc\.?\s+[^,\n]+)', r'(B\.?Sc\.?\s+[^,\n]+)',
+                r'(Bachelor\s+of\s+[^,\n]+)', r'(Master\s+of\s+[^,\n]+)',
+                r'(Diploma\s+in\s+[^,\n]+)', r'(Certificate\s+in\s+[^,\n]+)'
             ]
             
             for pattern in course_patterns:
                 match = re.search(pattern, text, re.IGNORECASE)
                 if match:
                     course_name = match.group(1).strip()
-                    return {
-                        'name': course_name,
-                        'duration': self.extract_duration_from_text(text) or 'N/A',
-                        'fees': self.extract_fees_from_text(text) or 'N/A',
-                        'seats': self.extract_seats_from_text(text) or 'N/A',
-                        'mode': 'Full Time'
-                    }
+                    if len(course_name) > 5:
+                        return {
+                            'name': course_name,
+                            'duration': self.extract_duration(text),
+                            'fees': self.extract_fees(text),
+                            'seats': self.extract_seats(text),
+                            'eligibility': self.extract_eligibility(text),
+                            'source': 'element'
+                        }
             return None
         except Exception as e:
             return None
     
     def extract_courses_from_text(self, text: str) -> List[Dict]:
-        """Extract courses using text patterns"""
+        """Extract courses using text pattern matching"""
         courses = []
         
-        course_patterns = [
-            r'B\.Tech(?:\s+in)?\s+([^,\n\.]+)',
-            r'M\.Tech(?:\s+in)?\s+([^,\n\.]+)',
-            r'MBA(?:\s+in)?\s+([^,\n\.]*)',
-            r'Bachelor\s+of\s+([^,\n\.]+)',
-            r'Master\s+of\s+([^,\n\.]+)'
+        # More comprehensive course patterns
+        patterns = [
+            (r'B\.?Tech\.?\s+(?:in\s+)?([^,\n\.]{5,50})', 'B.Tech'),
+            (r'M\.?Tech\.?\s+(?:in\s+)?([^,\n\.]{5,50})', 'M.Tech'),
+            (r'MBA\s*(?:in\s+)?([^,\n\.]{0,30})', 'MBA'),
+            (r'BCA\s+(?:in\s+)?([^,\n\.]{5,40})', 'BCA'),
+            (r'MCA\s+(?:in\s+)?([^,\n\.]{5,40})', 'MCA'),
+            (r'M\.?Sc\.?\s+(?:in\s+)?([^,\n\.]{5,40})', 'M.Sc'),
+            (r'B\.?Sc\.?\s+(?:in\s+)?([^,\n\.]{5,40})', 'B.Sc'),
+            (r'Diploma\s+in\s+([^,\n\.]{5,40})', 'Diploma'),
+            (r'Bachelor\s+of\s+([^,\n\.]{5,40})', 'Bachelor'),
+            (r'Master\s+of\s+([^,\n\.]{5,40})', 'Master')
         ]
         
-        for pattern in course_patterns:
+        for pattern, prefix in patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
-            for match in matches[:5]:  # Limit matches per pattern
+            for match in matches[:10]:  # Limit matches per pattern
                 if len(match.strip()) > 3:
+                    full_name = f"{prefix} {match.strip()}" if match.strip() else prefix
                     courses.append({
-                        'name': f"{pattern.split('(')[0].replace('\\s+', ' ').replace('\\', '')} {match.strip()}",
+                        'name': full_name,
                         'duration': 'N/A',
                         'fees': 'N/A',
                         'seats': 'N/A',
-                        'mode': 'N/A'
+                        'eligibility': 'N/A',
+                        'source': 'text_pattern'
                     })
         
         return courses
     
-    def extract_duration_from_text(self, text: str) -> Optional[str]:
+    def extract_duration(self, text: str) -> str:
         """Extract course duration"""
-        duration_pattern = r'(\d+)\s*(?:year|yr)s?'
-        match = re.search(duration_pattern, text, re.IGNORECASE)
-        if match:
-            return f"{match.group(1)} Years"
-        return None
+        patterns = [
+            r'(\d+)\s*(?:year|yr)s?',
+            r'(\d+)\s*(?:semester|sem)s?',
+            r'duration[:\s]*(\d+\s*(?:year|yr)s?)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1) + " Years" if 'year' in pattern else match.group(0)
+        return 'N/A'
     
-    def extract_seats_from_text(self, text: str) -> Optional[str]:
-        """Extract seat count"""
-        seats_pattern = r'(\d+)\s*(?:seat|intake)'
-        match = re.search(seats_pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1)
-        return None
+    def extract_fees(self, text: str) -> str:
+        """Extract fees information"""
+        patterns = [
+            r'₹\s*[\d,]+(?:\.\d+)?(?:\s*(?:lakh|crore|L|Cr))?',
+            r'Rs\.?\s*[\d,]+(?:\.\d+)?(?:\s*(?:lakh|crore|L|Cr))?',
+            r'fee[s]?[:\s]*₹\s*[\d,]+',
+            r'fee[s]?[:\s]*Rs\.?\s*[\d,]+',
+            r'[\d,]+(?:\.\d+)?\s*(?:lakh|crore|L|Cr)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0)
+        return 'N/A'
     
-    def scrape_placements(self, url: str) -> Dict:
-        """Scrape placement statistics"""
-        soup = self.make_request(url, delay=2.0)
+    def extract_seats(self, text: str) -> str:
+        """Extract seat information"""
+        patterns = [
+            r'(\d+)\s*seat[s]?',
+            r'intake[:\s]*(\d+)',
+            r'capacity[:\s]*(\d+)',
+            r'admission[s]?[:\s]*(\d+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return 'N/A'
+    
+    def extract_eligibility(self, text: str) -> str:
+        """Extract eligibility criteria"""
+        patterns = [
+            r'(?:eligibility|qualification)[:\s]*([^.!?]+[.!?])',
+            r'10\+2[^.!?]*[.!?]',
+            r'graduation[^.!?]*[.!?]',
+            r'bachelor[^.!?]*[.!?]'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                result = match.group(0) if '10+2' in match.group(0) else match.group(1)
+                return result.strip()[:200]  # Limit length
+        return 'N/A'
+    
+    def scrape_admissions_page(self, url: str) -> Dict:
+        """Scrape admission information"""
+        soup = self.make_request(url)
         if not soup:
             return {}
         
-        text = soup.get_text()
-        
-        placement_data = {
-            'placement_rate': self.extract_placement_rate(text),
-            'average_package': self.extract_package(text, 'average'),
-            'highest_package': self.extract_package(text, 'highest'),
-            'median_package': self.extract_package(text, 'median'),
-            'top_recruiters': self.extract_recruiters(text)
+        admission_data = {
+            'eligibility_criteria': [],
+            'entrance_exams': [],
+            'application_process': [],
+            'important_dates': [],
+            'selection_process': 'N/A',
+            'application_fee': 'N/A'
         }
         
+        page_text = soup.get_text()
+        
+        # Extract entrance exams
+        exam_keywords = [
+            'JEE Main', 'JEE Advanced', 'GATE', 'CAT', 'MAT', 'XAT', 'GMAT',
+            'NEET', 'CLAT', 'JAM', 'CSIR NET', 'UGC NET', 'TANCET', 'KCET'
+        ]
+        
+        for exam in exam_keywords:
+            if exam.lower() in page_text.lower():
+                admission_data['entrance_exams'].append(exam)
+        
+        # Extract eligibility criteria patterns
+        eligibility_patterns = [
+            r'(?:eligibility|qualification)[^.!?]*(?:10\+2|graduation|bachelor)[^.!?]*[.!?]',
+            r'(?:minimum|required)[^.!?]*(?:marks|percentage|CGPA)[^.!?]*[.!?]',
+            r'(?:candidates|students)[^.!?]*(?:must|should|need)[^.!?]*[.!?]'
+        ]
+        
+        for pattern in eligibility_patterns:
+            matches = re.findall(pattern, page_text, re.IGNORECASE)
+            for match in matches[:5]:  # Limit to avoid too much text
+                if len(match) > 20:
+                    admission_data['eligibility_criteria'].append(match.strip())
+        
+        # Extract application fee
+        fee_patterns = [
+            r'application\s+fee[:\s]*₹\s*[\d,]+',
+            r'registration\s+fee[:\s]*₹\s*[\d,]+',
+            r'₹\s*[\d,]+[^.!?]*(?:application|registration)[^.!?]*fee'
+        ]
+        
+        for pattern in fee_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                admission_data['application_fee'] = match.group(0)
+                break
+        
+        # Extract important dates (simplified)
+        date_patterns = [
+            r'(?:last\s+date|deadline|application)[^.!?]*(?:\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})',
+            r'(?:\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})[^.!?]*(?:last\s+date|deadline|application)'
+        ]
+        
+        for pattern in date_patterns:
+            matches = re.findall(pattern, page_text, re.IGNORECASE)
+            for match in matches[:3]:  # Limit dates
+                admission_data['important_dates'].append(match.strip())
+        
+        return admission_data
+    
+    def scrape_placements_page(self, url: str) -> Dict:
+        """Scrape placement statistics"""
+        soup = self.make_request(url)
+        if not soup:
+            return {}
+        
+        page_text = soup.get_text()
+        
+        placement_data = {
+            'placement_rate': 'N/A',
+            'average_package': 'N/A',
+            'highest_package': 'N/A',
+            'median_package': 'N/A',
+            'lowest_package': 'N/A',
+            'total_offers': 'N/A',
+            'companies_visited': 'N/A',
+            'top_recruiters': [],
+            'sector_wise_placement': {}
+        }
+        
+        # Extract placement statistics
+        stats_patterns = {
+            'placement_rate': [
+                r'(\d+(?:\.\d+)?)%[^.!?]*(?:placement|placed)',
+                r'placement[^.!?]*(\d+(?:\.\d+)?)%'
+            ],
+            'average_package': [
+                r'average[^.!?]*package[^.!?]*₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)',
+                r'₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)[^.!?]*average'
+            ],
+            'highest_package': [
+                r'highest[^.!?]*package[^.!?]*₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)',
+                r'₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)[^.!?]*highest'
+            ],
+            'median_package': [
+                r'median[^.!?]*package[^.!?]*₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)',
+                r'₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)[^.!?]*median'
+            ]
+        }
+        
+        for key, patterns in stats_patterns.items():
+            for pattern in patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    if key == 'placement_rate':
+                        placement_data[key] = f"{match.group(1)}%"
+                    else:
+                        placement_data[key] = f"₹{match.group(1)} LPA"
+                    break
+        
+        # Extract top recruiters
+        recruiter_keywords = [
+            'Microsoft', 'Google', 'Amazon', 'Apple', 'Facebook', 'Netflix', 'Adobe',
+            'TCS', 'Infosys', 'Wipro', 'IBM', 'Accenture', 'Deloitte', 'Capgemini',
+            'Goldman Sachs', 'Morgan Stanley', 'JPMorgan', 'Deutsche Bank',
+            'McKinsey', 'BCG', 'Bain', 'EY', 'PwC', 'KPMG',
+            'Samsung', 'Intel', 'Qualcomm', 'Nvidia', 'Oracle', 'Salesforce',
+            'Flipkart', 'Paytm', 'Ola', 'Uber', 'Swiggy', 'Zomato', 'PhonePe',
+            'ISRO', 'DRDO', 'HAL', 'BHEL', 'ONGC', 'NTPC', 'L&T'
+        ]
+        
+        for company in recruiter_keywords:
+            if company.lower() in page_text.lower():
+                placement_data['top_recruiters'].append(company)
+        
+        # Limit to top 15 recruiters
+        placement_data['top_recruiters'] = placement_data['top_recruiters'][:15]
+        
         return placement_data
-    
-    def extract_placement_rate(self, text: str) -> str:
-        """Extract placement percentage"""
-        patterns = [
-            r'(\d+(?:\.\d+)?)%\s*(?:placement|placed)',
-            r'placement.*?(\d+(?:\.\d+)?)%'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return f"{match.group(1)}%"
-        return 'N/A'
-    
-    def extract_package(self, text: str, package_type: str) -> str:
-        """Extract salary package information"""
-        patterns = [
-            rf'{package_type}.*?package.*?₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)',
-            rf'{package_type}.*?salary.*?₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA)',
-            rf'₹\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|LPA).*?{package_type}'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return f"₹{match.group(1)} LPA"
-        return 'N/A'
-    
-    def extract_recruiters(self, text: str) -> List[str]:
-        """Extract top recruiting companies"""
-        recruiters = []
-        
-        # Common top recruiters
-        company_keywords = [
-            'Microsoft', 'Google', 'Amazon', 'Apple', 'Facebook', 'Netflix',
-            'TCS', 'Infosys', 'Wipro', 'IBM', 'Accenture', 'Deloitte',
-            'Goldman Sachs', 'Morgan Stanley', 'JPMorgan', 'McKinsey',
-            'Samsung', 'Intel', 'Qualcomm', 'Adobe', 'Oracle',
-            'Flipkart', 'Paytm', 'Ola', 'Uber', 'Swiggy', 'Zomato'
-        ]
-        
-        for company in company_keywords:
-            if company.lower() in text.lower():
-                recruiters.append(company)
-        
-        return recruiters[:10]  # Top 10
 
 def main():
-    st.markdown('<h1 class="main-header">🎓 Comprehensive College Data Scraper</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🎯 Individual College Page Scraper</h1>', unsafe_allow_html=True)
+    st.markdown("**Specialized for scraping individual college pages like IIT Madras**")
     
     # Initialize session state
-    if 'scraper' not in st.session_state:
-        st.session_state.scraper = ComprehensiveCollegeScraper()
-    if 'scraped_data' not in st.session_state:
-        st.session_state.scraped_data = []
+    if 'college_scraper' not in st.session_state:
+        st.session_state.college_scraper = IndividualCollegeScraper()
+    if 'college_data' not in st.session_state:
+        st.session_state.college_data = {}
     
     # Sidebar controls
     with st.sidebar:
-        st.header("⚙️ Scraper Configuration")
+        st.header("⚙️ College Page Scraper")
         
-        base_url = st.text_input(
-            "Careers360 URL:",
-            value="https://engineering.careers360.com/colleges/ranking",
-            help="Enter any Careers360 ranking or listing page"
+        # College URL input
+        college_url = st.text_input(
+            "College Main Page URL:",
+            value="https://www.careers360.com/university/indian-institute-of-technology-madras",
+            help="Enter the main college page URL"
         )
         
-        max_colleges = st.slider("Max Colleges:", 1, 25, 8)
-        delay_seconds = st.slider("Delay (seconds):", 1.0, 5.0, 2.5, 0.5)
+        # Auto-generate related URLs
+        if college_url:
+            base_url = college_url.rstrip('/')
+            courses_url = f"{base_url}/courses"
+            admission_url = f"{base_url}/admission"
+            placement_url = f"{base_url}/placement"
+            
+            st.markdown("**Auto-generated URLs:**")
+            st.text_input("Courses URL:", value=courses_url, key="courses_url")
+            st.text_input("Admission URL:", value=admission_url, key="admission_url")
+            st.text_input("Placement URL:", value=placement_url, key="placement_url")
         
-        scrape_mode = st.selectbox(
-            "Data to Extract:",
-            ["Basic Info Only", "Basic + Courses", "Complete Data (Basic + Courses + Placements)"]
-        )
+        # Scraping options
+        delay_seconds = st.slider("Delay between requests:", 1.0, 5.0, 2.0, 0.5)
         
-        if st.button("🚀 Start Comprehensive Scraping", type="primary"):
-            st.session_state.scraping = True
+        # Individual scraping buttons
+        st.markdown("### 🎯 Scrape Specific Sections")
+        
+        if st.button("🏫 Scrape College Overview", type="primary"):
+            st.session_state.scraping = "overview"
+        
+        if st.button("📚 Scrape Courses"):
+            st.session_state.scraping = "courses"
+        
+        if st.button("🎯 Scrape Admissions"):
+            st.session_state.scraping = "admissions"
+        
+        if st.button("💼 Scrape Placements"):
+            st.session_state.scraping = "placements"
         
         st.markdown("---")
-        st.markdown("### 📊 Current Session")
-        st.metric("Colleges Scraped", len(st.session_state.scraped_data))
         
-        if st.session_state.scraped_data:
-            if st.button("🗑️ Clear All Data"):
-                st.session_state.scraped_data = []
-                st.rerun()
+        if st.button("🚀 Scrape All Sections", type="secondary"):
+            st.session_state.scraping = "all"
+        
+        if st.button("🗑️ Clear Data"):
+            st.session_state.college_data = {}
+            st.rerun()
     
-    # Main scraping process
-    if st.session_state.get('scraping', False):
-        with st.spinner("🔍 Starting comprehensive scraping..."):
-            # Step 1: Extract college list
-            st.info("📋 Extracting colleges from ranking page...")
-            colleges = st.session_state.scraper.extract_colleges_from_ranking(base_url, max_colleges)
-            
-            if not colleges:
-                st.error("❌ No colleges found. Please check the URL or try a different page.")
-                st.session_state.scraping = False
-                return
-            
-            st.success(f"✅ Found {len(colleges)} colleges to scrape")
-            
-            # Progress tracking
+    # Main scraping logic
+    if st.session_state.get('scraping'):
+        scraping_mode = st.session_state.scraping
+        
+        if scraping_mode == "overview":
+            with st.spinner("🔍 Scraping college overview..."):
+                overview_data = st.session_state.college_scraper.scrape_college_overview(college_url)
+                if overview_data:
+                    st.session_state.college_data['overview'] = overview_data
+                    st.success("✅ College overview scraped successfully!")
+                else:
+                    st.error("❌ Failed to scrape college overview")
+        
+        elif scraping_mode == "courses":
+            with st.spinner("📚 Scraping courses data..."):
+                courses_data = st.session_state.college_scraper.scrape_courses_page(st.session_state.courses_url)
+                if courses_data:
+                    st.session_state.college_data['courses'] = courses_data
+                    st.success(f"✅ Found {len(courses_data)} courses!")
+                else:
+                    st.error("❌ No courses found")
+        
+        elif scraping_mode == "admissions":
+            with st.spinner("🎯 Scraping admissions data..."):
+                admissions_data = st.session_state.college_scraper.scrape_admissions_page(st.session_state.admission_url)
+                if admissions_data:
+                    st.session_state.college_data['admissions'] = admissions_data
+                    st.success("✅ Admissions data scraped successfully!")
+                else:
+                    st.error("❌ Failed to scrape admissions data")
+        
+        elif scraping_mode == "placements":
+            with st.spinner("💼 Scraping placements data..."):
+                placements_data = st.session_state.college_scraper.scrape_placements_page(st.session_state.placement_url)
+                if placements_data:
+                    st.session_state.college_data['placements'] = placements_data
+                    st.success("✅ Placements data scraped successfully!")
+                else:
+                    st.error("❌ Failed to scrape placements data")
+        
+        elif scraping_mode == "all":
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Step 2: Enhanced scraping for each college
-            for i, college in enumerate(colleges):
-                status_text.text(f"🏫 Processing {college['name']} ({i+1}/{len(colleges)})...")
-                progress_bar.progress((i + 1) / len(colleges))
-                
-                # Scrape courses if requested
-                if scrape_mode in ["Basic + Courses", "Complete Data (Basic + Courses + Placements)"]:
-                    with st.spinner(f"📚 Extracting courses from {college['name']}..."):
-                        college['courses'] = st.session_state.scraper.scrape_courses(college['courses_url'])
-                        if college['courses']:
-                            st.success(f"Found {len(college['courses'])} courses")
-                
-                # Scrape placements if requested
-                if scrape_mode == "Complete Data (Basic + Courses + Placements)":
-                    with st.spinner(f"💼 Extracting placement data from {college['name']}..."):
-                        college['placements'] = st.session_state.scraper.scrape_placements(college['placement_url'])
-                        if any(v != 'N/A' for v in college['placements'].values() if isinstance(v, str)):
-                            st.success("Found placement data")
-                
-                st.session_state.scraped_data.append(college)
-                time.sleep(delay_seconds)
+            # Step 1: Overview
+            status_text.text("🏫 Scraping college overview...")
+            progress_bar.progress(0.2)
+            overview_data = st.session_state.college_scraper.scrape_college_overview(college_url)
+            if overview_data:
+                st.session_state.college_data['overview'] = overview_data
+            time.sleep(delay_seconds)
             
-            status_text.text("✅ Comprehensive scraping completed!")
-            st.session_state.scraping = False
-            st.rerun()
-    
-    # Display comprehensive results
-    if st.session_state.scraped_data:
-        st.header("📊 Comprehensive College Data")
+            # Step 2: Courses
+            status_text.text("📚 Scraping courses...")
+            progress_bar.progress(0.4)
+            courses_data = st.session_state.college_scraper.scrape_courses_page(st.session_state.courses_url)
+            if courses_data:
+                st.session_state.college_data['courses'] = courses_data
+            time.sleep(delay_seconds)
+            
+            # Step 3: Admissions
+            status_text.text("🎯 Scraping admissions...")
+            progress_bar.progress(0.7)
+            admissions_data = st.session_state.college_scraper.scrape_admissions_page(st.session_state.admission_url)
+            if admissions_data:
+                st.session_state.college_data['admissions'] = admissions_data
+            time.sleep(delay_seconds)
+            
+            # Step 4: Placements
+            status_text.text("💼 Scraping placements...")
+            progress_bar.progress(0.9)
+            placements_data = st.session_state.college_scraper.scrape_placements_page(st.session_state.placement_url)
+            if placements_data:
+                st.session_state.college_data['placements'] = placements_data
+            
+            progress_bar.progress(1.0)
+            status_text.text("✅ All sections scraped successfully!")
+            st.success("🎉 Complete college data extracted!")
         
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
+        st.session_state.scraping = None
+        st.rerun()
+    
+    # Display results
+    if st.session_state.college_data:
+        
+        # Export options
+        col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Colleges", len(st.session_state.scraped_data))
-        with col2:
-            total_courses = sum(len(college.get('courses', [])) for college in st.session_state.scraped_data)
-            st.metric("Total Courses Found", total_courses)
-        with col3:
-            with_placements = sum(1 for college in st.session_state.scraped_data 
-                                if college.get('placements', {}).get('placement_rate', 'N/A') != 'N/A')
-            st.metric("Colleges with Placement Data", with_placements)
-        with col4:
-            if st.button("📥 Export All Data"):
-                # Export options
-                df_basic = pd.DataFrame([{
-                    'Name': c['name'], 'Rank': c['rank'], 'Rating': c['rating'],
-                    'Location': c['location'], 'Fees': c['fees'], 'URL': c['college_url'],
-                    'Total_Courses': len(c.get('courses', [])),
-                    'Placement_Rate': c.get('placements', {}).get('placement_rate', 'N/A'),
-                    'Average_Package': c.get('placements', {}).get('average_package', 'N/A')
-                } for c in st.session_state.scraped_data])
-                
-                csv = df_basic.to_csv(index=False)
+            if st.button("📥 Export JSON"):
+                json_data = json.dumps(st.session_state.college_data, indent=2)
                 st.download_button(
-                    label="📄 Download CSV",
-                    data=csv,
-                    file_name=f"comprehensive_colleges_data_{len(st.session_state.scraped_data)}.csv",
-                    mime="text/csv"
-                )
-                
-                json_data = json.dumps(st.session_state.scraped_data, indent=2)
-                st.download_button(
-                    label="📋 Download JSON",
+                    label="💾 Download JSON",
                     data=json_data,
-                    file_name=f"comprehensive_colleges_data_{len(st.session_state.scraped_data)}.json",
+                    file_name="college_data.json",
                     mime="application/json"
                 )
-        
-        # Display detailed college information
-        for college in st.session_state.scraped_data:
-            with st.expander(f"🏫 {college['name']} (Rank: {college['rank']}) - {college.get('source', 'unknown')} source"):
+        with col2:
+            if st.button("📊 Export CSV Summary"):
+                # Create summary CSV
+                summary_data = []
+                overview = st.session_state.college_data.get('overview', {})
+                courses = st.session_state.college_data.get('courses', [])
+                placements = st.session_state.college_data.get('placements', {})
                 
-                # Basic information
-                col1, col2 = st.columns(2)
+                summary_data.append({
+                    'College_Name': overview.get('name', 'N/A'),
+                    'Location': overview.get('location', 'N/A'),
+                    'Established': overview.get('established', 'N/A'),
+                    'Type': overview.get('type', 'N/A'),
+                    'Total_Courses': len(courses),
+                    'Placement_Rate': placements.get('placement_rate', 'N/A'),
+                    'Average_Package': placements.get('average_package', 'N/A'),
+                    'Highest_Package': placements.get('highest_package', 'N/A')
+                })
+                
+                df = pd.DataFrame(summary_data)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="💾 Download CSV",
+                    data=csv,
+                    file_name="college_summary.csv",
+                    mime="text/csv"
+                )
+        
+        # Display College Overview
+        if 'overview' in st.session_state.college_data:
+            st.markdown('<div class="section-header">🏫 College Overview</div>', unsafe_allow_html=True)
+            
+            overview = st.session_state.college_data['overview']
+            
+            with st.container():
+                st.markdown('<div class="data-card">', unsafe_allow_html=True)
+                
+                # Basic info metrics
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.markdown("### 📋 Basic Information")
-                    st.write(f"**Rank:** {college['rank']}")
-                    st.write(f"**Rating:** {college['rating']}")
-                    st.write(f"**Location:** {college['location']}")
-                    st.write(f"**Fees:** {college['fees']}")
-                
+                    st.metric("College Name", overview.get('name', 'N/A'))
                 with col2:
-                    st.markdown("### 🔗 Quick Links")
-                    st.markdown(f"- [🏠 College Homepage]({college['college_url']})")
-                    st.markdown(f"- [📚 Courses Page]({college['courses_url']})")
-                    st.markdown(f"- [🎯 Admissions]({college['admission_url']})")
-                    st.markdown(f"- [💼 Placements]({college['placement_url']})")
+                    st.metric("Location", overview.get('location', 'N/A'))
+                with col3:
+                    st.metric("Established", overview.get('established', 'N/A'))
+                with col4:
+                    st.metric("Type", overview.get('type', 'N/A'))
                 
-                # Courses section
-                if 'courses' in college and college['courses']:
-                    st.markdown("### 📚 Available Courses")
-                    
-                    # Course summary
-                    st.info(f"Found {len(college['courses'])} courses")
-                    
-                    # Display courses in a nice format
-                    for course in college['courses']:
-                        with st.container():
-                            st.markdown(f"""
-                            <div class="course-item">
-                                <strong>{course['name']}</strong><br>
-                                <small>Duration: {course['duration']} | Fees: {course['fees']} | Seats: {course['seats']} | Mode: {course['mode']}</small>
-                            </div>
-                            """, unsafe_allow_html=True)
+                # Rankings if available
+                if overview.get('ranking'):
+                    st.markdown("**🏆 Rankings:**")
+                    ranking_cols = st.columns(len(overview['ranking']))
+                    for i, (source, rank) in enumerate(overview['ranking'].items()):
+                        with ranking_cols[i]:
+                            st.metric(f"{source} Rank", rank)
                 
-                # Placement section
-                if 'placements' in college and college['placements']:
-                    st.markdown("### 💼 Placement Statistics")
-                    
-                    pl_data = college['placements']
-                    
-                    # Placement metrics
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Placement Rate", pl_data.get('placement_rate', 'N/A'))
-                    with col2:
-                        st.metric("Average Package", pl_data.get('average_package', 'N/A'))
-                    with col3:
-                        st.metric("Highest Package", pl_data.get('highest_package', 'N/A'))
-                    with col4:
-                        st.metric("Median Package", pl_data.get('median_package', 'N/A'))
-                    
-                    # Top recruiters
-                    if pl_data.get('top_recruiters'):
-                        st.markdown("**🏢 Top Recruiters:**")
-                        recruiters_text = ", ".join(pl_data['top_recruiters'])
-                        st.markdown(f"<div style='background: #f0f2f6; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;'>{recruiters_text}</div>", unsafe_allow_html=True)
+                # Overview text
+                if overview.get('overview') and overview['overview'] != 'N/A':
+                    st.markdown("**📝 Overview:**")
+                    st.write(overview['overview'])
                 
-                # Data quality indicator
-                st.markdown("---")
-                data_quality_score = 0
-                quality_items = []
+                st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display Courses
+        if 'courses' in st.session_state.college_data:
+            st.markdown('<div class="section-header">📚 Courses Offered</div>', unsafe_allow_html=True)
+            
+            courses = st.session_state.college_data['courses']
+            
+            if courses:
+                st.markdown(f'<div class="info-banner">Found {len(courses)} courses</div>', unsafe_allow_html=True)
                 
-                if college['rating'] != 'N/A':
-                    data_quality_score += 20
-                    quality_items.append("✅ Rating")
-                else:
-                    quality_items.append("❌ Rating")
+                # Create courses DataFrame for better display
+                courses_df = pd.DataFrame(courses)
                 
-                if college['location'] != 'N/A':
-                    data_quality_score += 20
-                    quality_items.append("✅ Location")
-                else:
-                    quality_items.append("❌ Location")
+                # Display as interactive table
+                st.dataframe(
+                    courses_df, 
+                    use_container_width=True,
+                    hide_index=True
+                )
                 
-                if college['fees'] != 'N/A':
-                    data_quality_score += 20
-                    quality_items.append("✅ Fees")
-                else:
-                    quality_items.append("❌ Fees")
+                # Course statistics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    btech_count = len([c for c in courses if 'tech' in c.get('name', '').lower() and 'b.' in c.get('name', '').lower()])
+                    st.metric("B.Tech Courses", btech_count)
+                with col2:
+                    mtech_count = len([c for c in courses if 'tech' in c.get('name', '').lower() and 'm.' in c.get('name', '').lower()])
+                    st.metric("M.Tech Courses", mtech_count)
+                with col3:
+                    other_count = len(courses) - btech_count - mtech_count
+                    st.metric("Other Courses", other_count)
+            else:
+                st.warning("No courses data available")
+        
+        # Display Admissions
+        if 'admissions' in st.session_state.college_data:
+            st.markdown('<div class="section-header">🎯 Admission Information</div>', unsafe_allow_html=True)
+            
+            admissions = st.session_state.college_data['admissions']
+            
+            with st.container():
+                st.markdown('<div class="data-card">', unsafe_allow_html=True)
                 
-                if college.get('courses'):
-                    data_quality_score += 20
-                    quality_items.append(f"✅ Courses ({len(college['courses'])})")
-                else:
-                    quality_items.append("❌ Courses")
+                # Entrance Exams
+                if admissions.get('entrance_exams'):
+                    st.markdown("**📝 Entrance Exams:**")
+                    exams_text = ", ".join(admissions['entrance_exams'])
+                    st.markdown(f'<div class="metric-item">{exams_text}</div>', unsafe_allow_html=True)
                 
-                if college.get('placements') and any(v != 'N/A' for v in college['placements'].values() if isinstance(v, str)):
-                    data_quality_score += 20
-                    quality_items.append("✅ Placements")
-                else:
-                    quality_items.append("❌ Placements")
+                # Application Fee
+                if admissions.get('application_fee') and admissions['application_fee'] != 'N/A':
+                    st.markdown("**💰 Application Fee:**")
+                    st.markdown(f'<div class="metric-item">{admissions["application_fee"]}</div>', unsafe_allow_html=True)
                 
-                st.markdown(f"**📊 Data Quality: {data_quality_score}%**")
-                st.markdown(" | ".join(quality_items))
-
-    # Instructions and tips
-    with st.expander("📖 How to Use This Comprehensive Scraper"):
+                # Eligibility Criteria
+                if admissions.get('eligibility_criteria'):
+                    st.markdown("**✅ Eligibility Criteria:**")
+                    for i, criteria in enumerate(admissions['eligibility_criteria'][:3]):  # Show top 3
+                        st.markdown(f'<div class="metric-item">{i+1}. {criteria}</div>', unsafe_allow_html=True)
+                
+                # Important Dates
+                if admissions.get('important_dates'):
+                    st.markdown("**📅 Important Dates:**")
+                    for date in admissions['important_dates'][:3]:  # Show top 3
+                        st.markdown(f'<div class="metric-item">• {date}</div>', unsafe_allow_html=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display Placements
+        if 'placements' in st.session_state.college_data:
+            st.markdown('<div class="section-header">💼 Placement Statistics</div>', unsafe_allow_html=True)
+            
+            placements = st.session_state.college_data['placements']
+            
+            with st.container():
+                st.markdown('<div class="data-card">', unsafe_allow_html=True)
+                
+                # Placement metrics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Placement Rate", placements.get('placement_rate', 'N/A'))
+                with col2:
+                    st.metric("Average Package", placements.get('average_package', 'N/A'))
+                with col3:
+                    st.metric("Highest Package", placements.get('highest_package', 'N/A'))
+                with col4:
+                    st.metric("Median Package", placements.get('median_package', 'N/A'))
+                
+                # Top Recruiters
+                if placements.get('top_recruiters'):
+                    st.markdown("**🏢 Top Recruiters:**")
+                    recruiters_text = ", ".join(placements['top_recruiters'])
+                    st.markdown(f'<div class="metric-item">{recruiters_text}</div>', unsafe_allow_html=True)
+                
+                # Additional metrics if available
+                additional_metrics = ['total_offers', 'companies_visited', 'lowest_package']
+                additional_data = {k: v for k, v in placements.items() if k in additional_metrics and v != 'N/A'}
+                
+                if additional_data:
+                    st.markdown("**📊 Additional Statistics:**")
+                    for key, value in additional_data.items():
+                        display_key = key.replace('_', ' ').title()
+                        st.markdown(f'<div class="metric-item"><strong>{display_key}:</strong> {value}</div>', unsafe_allow_html=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Instructions
+    with st.expander("📖 How to Use Individual College Scraper"):
         st.markdown("""
-        ### 🎯 **What This Scraper Extracts:**
-        
-        **📋 Basic Information:**
-        - College name, rank, rating
-        - Location and fees information
-        - Official website links
-        
-        **📚 Course Details:**
-        - Course names (B.Tech, M.Tech, MBA, etc.)
-        - Duration, fees, seat availability
-        - Study modes and specializations
-        
-        **💼 Placement Data:**
-        - Placement rates and packages
-        - Top recruiting companies
-        - Average, highest, and median salaries
+        ### 🎯 **Purpose:**
+        This scraper is specifically designed for individual college pages on Careers360, like:
+        - `https://www.careers360.com/university/[college-name]`
+        - `https://www.careers360.com/university/[college-name]/courses`
+        - `https://www.careers360.com/university/[college-name]/admission`
+        - `https://www.careers360.com/university/[college-name]/placement`
         
         ### 🚀 **How to Use:**
         
-        1. **Enter URL:** Use any Careers360 ranking or college listing page
-        2. **Set Parameters:** Choose max colleges and delay between requests  
-        3. **Select Mode:** 
-           - **Basic:** Just college info and links
-           - **Basic + Courses:** Includes course details
-           - **Complete:** Everything including placement data
-        4. **Start Scraping:** Click the button and wait for results
-        5. **Export Data:** Download as CSV or JSON when complete
+        1. **Enter College URL:** Paste the main college page URL
+        2. **Auto-Generated URLs:** The system automatically creates related URLs
+        3. **Choose Scraping Mode:**
+           - **Individual Sections:** Scrape one section at a time
+           - **All Sections:** Comprehensive scraping of all pages
+        4. **View Results:** Data appears in organized sections below
+        5. **Export Data:** Download as JSON or CSV
         
-        ### 🎯 **Best URLs to Try:**
+        ### 📊 **What Gets Extracted:**
         
-        - **Main Ranking:** `https://engineering.careers360.com/colleges/ranking`
-        - **State-wise:** `https://engineering.careers360.com/colleges/ranking?state=maharashtra`
-        - **Category:** `https://engineering.careers360.com/colleges/ranking?category=government`
-        - **Search Results:** Any search results page with college listings
+        **🏫 College Overview:**
+        - College name, location, establishment year
+        - College type (Government/Private/Deemed)
+        - Rankings (NIRF, QS, etc.)
+        - Overview/description
         
-        ### ⚡ **Performance Tips:**
+        **📚 Courses Page:**
+        - Course names (B.Tech, M.Tech, MBA, etc.)
+        - Duration, fees, seat availability
+        - Eligibility criteria
+        - Multiple extraction strategies for different page layouts
         
-        - **Start Small:** Use 5-8 colleges first to test
-        - **Increase Delay:** Use 2-3 seconds delay to avoid rate limiting
-        - **Check Results:** Verify data quality before large batches
-        - **Export Frequently:** Download data as you go
+        **🎯 Admissions Page:**
+        - Entrance exams required
+        - Eligibility criteria
+        - Application fees
+        - Important dates
+        - Selection process
+        
+        **💼 Placements Page:**
+        - Placement rates and statistics
+        - Average, highest, median packages
+        - Top recruiting companies
+        - Additional metrics (offers, companies visited)
+        
+        ### 🎯 **Best Practices:**
+        
+        - **Test Individual Sections:** Start with one section to verify data quality
+        - **Use Delays:** 2-3 seconds between requests to avoid rate limiting
+        - **Check Data Quality:** Review extracted information for accuracy
+        - **Export Regularly:** Save your data as you collect it
         
         ### 🔧 **Troubleshooting:**
         
-        - **No Colleges Found:** Try a different URL or page
-        - **Missing Data:** Some pages may not have all information
-        - **Slow Performance:** Increase delay or reduce max colleges
-        - **Errors:** Check internet connection and try again
+        - **No Data Found:** The page structure might be different; try individual sections
+        - **Partial Data:** Some pages may not have all information sections
+        - **Errors:** Check internet connection and try again with higher delays
         
-        ### 📊 **Data Quality:**
-        
-        Each college shows a data quality score based on:
-        - ✅ **20%** for Rating information
-        - ✅ **20%** for Location details  
-        - ✅ **20%** for Fee information
-        - ✅ **20%** for Course data
-        - ✅ **20%** for Placement statistics
-        
-        ### 💡 **Pro Tips:**
-        
-        - **Multiple Sources:** Try different ranking pages for comprehensive data
-        - **Verify Data:** Cross-check important information with official sources
-        - **Regular Updates:** College data changes frequently, re-scrape periodically
-        - **Backup Data:** Export and save your results regularly
+        ### ✅ **Supported Colleges:**
+        This scraper works best with major colleges on Careers360 that have structured pages:
+        - IITs, NITs, IIITs
+        - Major private engineering colleges
+        - Business schools with dedicated pages
+        - Any college with standard Careers360 page structure
         """)
 
 if __name__ == "__main__":
